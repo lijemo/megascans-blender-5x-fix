@@ -1,0 +1,85 @@
+diff --git a/MSPlugin/__init__.py b/MSPlugin/__init__.py
+index 56f9fbb..5bd3526 100644
+--- a/MSPlugin/__init__.py
++++ b/MSPlugin/__init__.py
+@@ -93,7 +93,8 @@ class MS_Init_ImportProcess():
+                         self.ApplyToSelection = bool(self.json_data["applyToSelection"])
+ 
+                     if (self.isCycles):
+-                        if(bpy.context.scene.cycles.feature_set == 'EXPERIMENTAL'):
++                        # feature_set was removed in Blender 5.0 (adaptive subdivision is no longer experimental).
++                        if(getattr(bpy.context.scene.cycles, "feature_set", None) == 'EXPERIMENTAL'):
+                             self.DisplacementSetup = 'adaptive'
+                     
+                     texturesListName = "components"
+@@ -145,7 +146,8 @@ class MS_Init_ImportProcess():
+                         self.assetName = "_".join(self.assetName.split("_")[:-1])
+ 
+                     self.materialName = self.assetName + '_' + self.assetID
+-                    self.colorSpaces = ["sRGB", "Non-Color", "Linear"]
++                    # "Linear" was renamed to "Linear Rec.709" in Blender 4.0.
++                    self.colorSpaces = ["sRGB", "Non-Color", "Linear Rec.709" if bpy.app.version >= (4, 0, 0) else "Linear"]
+                     
+                     print(f'Asset --> {self.assetType} -- {self.assetName}')
+                     
+@@ -202,8 +204,11 @@ class MS_Init_ImportProcess():
+                     elif meshFormat.lower() == "obj":
+                         if bpy.app.version < (2, 92, 0):
+                             bpy.ops.import_scene.obj(filepath=meshPath, use_split_objects = True, use_split_groups = True, global_clight_size = 1.0)
+-                        else:
++                        elif bpy.app.version < (4, 0, 0):
+                             bpy.ops.import_scene.obj(filepath=meshPath, use_split_objects = True, use_split_groups = True, global_clamp_size  = 1.0)
++                        else:
++                            # The legacy Python OBJ importer was removed in Blender 4.0.
++                            bpy.ops.wm.obj_import(filepath=meshPath, use_split_objects = True, use_split_groups = True, clamp_size = 1.0)
+                         # get selected objects
+                         obj_objects = [ o for o in bpy.context.scene.objects if o.select_get() ]
+                         self.selectedObjects += obj_objects
+@@ -336,7 +341,9 @@ class MS_Init_ImportProcess():
+ 
+     def CreateMaterial(self):
+         self.mat = (bpy.data.materials.get( self.materialName ) or bpy.data.materials.new( self.materialName ))
+-        self.mat.use_nodes = True
++        # Materials always use nodes from Blender 5.0 on; use_nodes is deprecated there.
++        if bpy.app.version < (5, 0, 0):
++            self.mat.use_nodes = True
+         self.nodes = self.mat.node_tree.nodes
+         self.parentName = "Principled BSDF"
+         self.materialOutputName = "Material Output"
+@@ -458,18 +465,22 @@ class MS_Init_ImportProcess():
+             displacementNode = self.CreateGenericNode("ShaderNodeDisplacement", 100, -2250)
+             displacementNode.inputs["Scale"].default_value = 0.1
+             displacementNode.inputs["Midlevel"].default_value = 0
+-            # Add converter>RGB Separator node
+-            RGBSplitterNode = self.CreateGenericNode("ShaderNodeSeparateRGB", -250, -2250)
++            # Add converter>Separate Color node (Separate RGB was removed in Blender 5.0)
++            RGBSplitterNode = self.CreateGenericNode("ShaderNodeSeparateColor", -250, -2250)
+             # Import normal map and normal map node setup.
+             displacementMapNode = self.CreateTextureNode("displacement", -650, -2250)
+             # Add displacementMapNode to RGBSplitterNode connection
+-            self.mat.node_tree.links.new(RGBSplitterNode.inputs["Image"], displacementMapNode.outputs["Color"])
++            self.mat.node_tree.links.new(RGBSplitterNode.inputs["Color"], displacementMapNode.outputs["Color"])
+             # Add RGBSplitterNode to displacementNode connection
+-            self.mat.node_tree.links.new(displacementNode.inputs["Height"], RGBSplitterNode.outputs["R"])
++            self.mat.node_tree.links.new(displacementNode.inputs["Height"], RGBSplitterNode.outputs["Red"])
+             # Add normalNode connection to the material output displacement node
+             if connectToMaterial:
+                 self.mat.node_tree.links.new(self.nodes.get(self.materialOutputName).inputs["Displacement"], displacementNode.outputs["Displacement"])
+-                self.mat.cycles.displacement_method = 'BOTH'
++                # displacement_method moved from the Cycles settings to the material in Blender 4.1.
++                if bpy.app.version >= (4, 1, 0):
++                    self.mat.displacement_method = 'BOTH'
++                else:
++                    self.mat.cycles.displacement_method = 'BOTH'
+ 
+         if self.DisplacementSetup == "regular":
+             pass        
+@@ -555,7 +566,7 @@ class thread_checker(threading.Thread):
+             while run_checker:
+                 time.sleep(3)
+                 for i in threading.enumerate():
+-                    if(i.getName() == "MainThread" and i.is_alive() == False):
++                    if(i.name == "MainThread" and i.is_alive() == False):
+                         host, port = 'localhost', 28888
+                         s = socket.socket()
+                         s.connect((host,port))
